@@ -1,23 +1,30 @@
-import ollama
-import time
 import argparse
-from recorder import screenshot
-from utils import get_active_window_name, send_notification, send_slack_message
-from pydantic import BaseModel
-from datetime import datetime
-from litellm import completion
-import instructor
-import replicate
 import base64
-from instructor.patch import wrap_chatcompletion
+import os
+import time
+from datetime import datetime
+
+import instructor
+import ollama
+import replicate
 from halo import Halo
+from instructor.patch import wrap_chatcompletion
+from litellm import completion
+from openai import OpenAI
+from pydantic import BaseModel
 
+from recorder import get_active_monitor, screenshot
+from utils import get_active_window_name, send_notification
+
+# TODOs:
+# - Ask which monitor should be recording. This is important because the user might have multiple monitors, and not all apps allow to figure out which monitor they are on.
+# - Ask for the goal of the day
+# - Figure out how to sort out the API KEY calls
+# - "What do you currently want me to do?": have user input at the various stages of the process
+
+# Each person would have to be given their own API key, which would have limitations on the number of requests they can make?
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY="))
 completion = wrap_chatcompletion(completion, mode=instructor.Mode.MD_JSON)
-
-
-class GoalExtract(BaseModel):
-    productive: bool
-    explanation: str
 
 
 class Activity(BaseModel):
@@ -27,116 +34,74 @@ class Activity(BaseModel):
     image_path: str
     model: str
     prompt: str
-    goal: str = None
-    is_productive: bool = None
-    explanation: str = None
-    iteration_duration: float = None
+    goal: str
+    is_productive: bool
+    user_msg: str
+    iteration_duration: float = float("inf")
 
-def coach_based_on_image_description(description, goal, cloud):
-    spinner = Halo(text='🧠 Coach is thinking...', spinner='dots')
+
+def prompt_for_coach(goal):
+    return f"""You are a productivity coach. You are helping me accomplish my goal for today. If I'm not working on something related to my goal, you should label my activity as not productive.
+
+The image you have access to is my computer screen. Let me know if you think my current activity is in line with my goals. Below are example responses, so you know what format to use.
+If you leave a message for the user, this will pop up as a notification on their screen, so be mindful of interrupting them if they are already productive.
+
+Response:
+- Productive: True
+- Description: From the screen, it can be seen that the user is writing code for a project called "ABC", which is in line with their goal to "Finish project ABC".
+- Message for user: None
+
+Response:
+- Productive: False
+- Description: From the screen, it can be seen that the user is scrolling social media, which is not productive because it has nothing to do with accomplishing their goal.
+- Message for user: You are scrolling social media, which is not productive because it has nothing to do with accomplishing your goal. You should really be working on your goal to "Finish project ABC" instead.
+
+CURRENT GOAL: {goal}
+
+YOUR RESPONSE BELOW:
+"""
+
+
+def run_coach(image_path, model, prompt):
+    spinner = Halo(text=f"👀 Running {model}...", spinner="dots")
     spinner.start()
-    if cloud:
-        for attempt in range(3):  # Retry up to 3 times
-            try:
-                output = replicate.run("mistralai/mixtral-8x7b-instruct-v0.1:7b3212fbaf88310cfef07a061ce94224e82efc8403c26fc67e8f6c065de51f21",
-                    input={
-                        "prompt": f"""You are a productivity coach. You are helping me accomplish my goal of {goal}. Let me know if you think the description of my current activity is in line with my goals. Coding is always productive. Social media isn't.
-    ## Rules
-    Respond in a JSON format:
+    with open(image_path, "rb") as file:
+        image_data = file.read()
+        encoded_image = base64.b64encode(image_data).decode("utf-8")
+        image_uri = f"data:image/jpeg;base64,{encoded_image}"
 
-    {{"productive": {{
-          "type": "boolean",
-          "description": "This should be 'true' if the activity is helping me accomplish my goal, otherwise 'false'"
-        }},
-        "explanation": {{
-          "type": "string",
-          "description": "This should be a helpful description of why I am not productive, only required if productive == false"
-        }}
-    }}
-
-    ## Current status
-    Goal: {goal}
-    Current activity: {description}
-
-    ## Your response:""",
-                    }
-                )
-                result = "".join([o for o in output]).strip()
-                clean_result = result.rstrip('}{') + '}'
-                record = GoalExtract.model_validate_json(clean_result)
-            except ValueError as e:
-                print(f"Attempt {attempt + 1}: Failed to validate JSON - {e}")
-                if attempt == 2:  # Last attempt
-                    raise ValueError("Failed to validate JSON after 3 attempts")
-                time.sleep(1)  # Wait a bit before retrying
-    else:
-        model = "ollama/mixtral"
-        messages = [
-            {
-                "role": "system",
-                "content": """You are a JSON extractor. Please extract the following JSON, No Talking at all. Just output JSON based on the description. NO TALKING AT ALL!!""",
-            },
-            {
-                "role": "user",
-                "content": f"""You are a productivity coach. You are helping my accomplish my goal of {goal}. Let me know if you think the description of my current activity is in line with my goals.
-
-RULES: You must respond in JSON format. DO NOT RESPOND WITH ANY TALKING.
-
-## Current status:
-Goal: {goal}
-Current activity: {description}
-
-## Result:""",
-            },
-        ]
-
-        record = completion(
+        response = client.chat.completions.create(
             model=model,
-            response_model=GoalExtract,
-            max_retries=5,
-            messages=messages,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt,
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_uri,
+                            },
+                        },
+                    ],
+                }  # type: ignore
+            ],
+            max_tokens=300,
         )
+
+        response_msg = response.choices[0].message.content
+        response_msg_split = response_msg.split("\n")[1:]  # type: ignore
+        assert len(response_msg_split) == 3, response_msg_split
+        productive_unparsed = response_msg_split[0].split(": ")[1]
+        assert productive_unparsed in ["True", "False"], productive_unparsed
+        productive = True if productive_unparsed == "True" else False
+        description = response_msg_split[1].split(": ")[1]
+        user_msg = response_msg_split[2].split(": ")[1]
     spinner.stop()
-    return record
-
-
-def run_llava(image_path, model, prompt):
-    spinner = Halo(text=f'👀 Running Llava ({model})...', spinner='dots')
-    spinner.start()
-    if "ollama" in model:
-        model = model.split("/")[1]
-        print(f"🦙 Running {model}")
-        with open(image_path, "rb") as file:
-            response = ollama.chat(
-                model=model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                        "images": [file.read()],
-                    },
-                ],
-            )
-        result = response["message"]["content"]
-    else:
-        with open(image_path, "rb") as file:
-            image_data = file.read()
-            encoded_image = base64.b64encode(image_data).decode("utf-8")
-            image_uri = f"data:image/jpeg;base64,{encoded_image}"
-
-            deployment = replicate.deployments.get("cbh123/coach-small-llama")
-            prediction = deployment.predictions.create(
-                input={"image": image_uri, "prompt": prompt}
-            )
-            prediction.wait()
-            output = prediction.output
-            # output = replicate.run(model,
-            #     input={"image": image_uri, "prompt": prompt}
-            # )
-        result = "".join([x for x in output])
-    spinner.stop()
-    return result
-
+    return productive, description, user_msg
 
 
 def main(goal, hard_mode, cloud):
@@ -149,61 +114,49 @@ def main(goal, hard_mode, cloud):
     )
     print("")
 
+    model = "gpt-4-vision-preview"
+    default_monitor = 0
+
     while True:
         iteration_start_time = time.time()  # Start timing the iteration
 
         print("------------------ NEW ITERATION ------------------")
 
-        latest_image = screenshot()
+        active_window_name = get_active_window_name()
+        active_monitor = get_active_monitor(active_window_name, default_monitor)
+        latest_image = screenshot(active_monitor)
+        prompt = prompt_for_coach(goal)
 
-        llava_prompt = "What is going on on this computer screen? Keep it very short and concise, and describe as matter of factly as possible."
-        llava_model = (
-            "ollama/llava:7b-v1.6-mistral-q4_0"
-            if not cloud
-            else "yorickvp/llava-v1.6-mistral-7b:19be067b589d0c46689ffa7cc3ff321447a441986a7694c01225973c2eafc874"
-        )
         start = time.time()
-        llava_output = run_llava(latest_image, llava_model, llava_prompt)
+        productive, description, user_msg = run_coach(latest_image, model, prompt)
         end = time.time()
 
-        print(f"👀 Ask Llava ({end - start:.2f}s)\noutput: {llava_output} \nsource: {latest_image}\n")
+        print(
+            f"👀 Ask coach for opinion on current activity ({end - start:.2f}s)\nProductive: {productive}\nActivity description: {description}\nUser message: {user_msg}\nImage source: {latest_image}\n"
+        )
 
         # create new Activity object
         activity = Activity(
-            activity=llava_output,
-            application=get_active_window_name(),
+            is_productive=productive,
+            activity=description,
+            user_msg=user_msg,
+            application=active_window_name,
             datetime=datetime.now(),
             image_path=latest_image,
-            model=llava_model,
-            prompt=llava_prompt,
+            model=model,
+            prompt=prompt,
+            goal=goal,
         )
-
-        start = time.time()
-        # Ask language model if this is a good idea considering the current goals
-        coaching_response = coach_based_on_image_description(
-            llava_output, goal, cloud
-        )
-        end = time.time()
-
-        print(f"🧠 Ask mixtral to decide if this is a good idea ({end - start:.2f}s)\noutput: {coaching_response}")
-
-        activity.goal = goal
-        activity.is_productive = coaching_response.productive
-        activity.explanation = coaching_response.explanation
 
         # Send a notification if the user is not being productive
-        if coaching_response.productive == False:
-            send_notification(
-                "🛑 PROCRASTINATIONALERT 🛑", coaching_response.explanation
-            )
+        if not productive and user_msg is not None:
+            send_notification("🛑 PROCRASTINATIONALERT 🛑", user_msg)
 
-            if hard_mode:
-                send_slack_message(
-                    f"🚨 CHARLIE IS PROCRASTINATING! 🚨 \nHe said he wanted to work on: {goal} but I see: {llava_output}, which I've determined is not productive because: \n {coaching_response.explanation}",
-                    latest_image,
-                )
-
-
+            # if hard_mode:
+            #     send_slack_message(
+            #         f"🚨 CHARLIE IS PROCRASTINATING! 🚨 \nHe said he wanted to work on: {goal} but I see: {llava_output}, which I've determined is not productive because: \n {coaching_response.explanation}",
+            #         latest_image,
+            #     )
 
         # save the activity to a file
         with open("./logs/activities.jsonl", "a") as f:
@@ -212,7 +165,6 @@ def main(goal, hard_mode, cloud):
         iteration_end_time = time.time()  # End timing the iteration
         activity.iteration_duration = iteration_end_time - iteration_start_time
         print(f"\n⏱ Iteration took {activity.iteration_duration:.2f} seconds.\n\n")
-
 
 
 if __name__ == "__main__":
