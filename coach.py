@@ -21,6 +21,8 @@ from utils import get_active_window_name, send_notification
 # - Ask for the goal of the day
 # - Figure out how to sort out the API KEY calls
 # - "What do you currently want me to do?": have user input at the various stages of the process
+# - "hard mode" where notification can't be removed
+
 
 # Each person would have to be given their own API key, which would have limitations on the number of requests they can make?
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY="))
@@ -104,14 +106,9 @@ def run_coach(image_path, model, prompt):
     return productive, description, user_msg
 
 
-def main(goal, hard_mode, cloud):
+def main(goal, hard_mode):
     print("🎯 Your goal is to ", goal)
     print("💪 HARD MODE ACTIVE" if hard_mode else "🐥 Easy mode.")
-    print(
-        "☁️ Running in the cloud on Replicate ☁️"
-        if cloud
-        else "💻 Running locally on Ollama 💻"
-    )
     print("")
 
     model = "gpt-4-vision-preview"
@@ -150,13 +147,7 @@ def main(goal, hard_mode, cloud):
 
         # Send a notification if the user is not being productive
         if not productive and user_msg is not None:
-            send_notification("🛑 PROCRASTINATIONALERT 🛑", user_msg)
-
-            # if hard_mode:
-            #     send_slack_message(
-            #         f"🚨 CHARLIE IS PROCRASTINATING! 🚨 \nHe said he wanted to work on: {goal} but I see: {llava_output}, which I've determined is not productive because: \n {coaching_response.explanation}",
-            #         latest_image,
-            #     )
+            send_notification("🛑 PROCRASTINATION ALERT 🛑", user_msg)
 
         # save the activity to a file
         with open("./logs/activities.jsonl", "a") as f:
@@ -175,10 +166,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hard", action="store_true", help="Whether or not to go hard mode"
     )
-    parser.add_argument(
-        "--cloud", action="store_true", help="Whether or not to run in the cloud"
-    )
 
     args = parser.parse_args()
 
-    main(args.goal, args.hard, args.cloud)
+    main(args.goal, args.hard)
