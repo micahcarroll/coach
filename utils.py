@@ -1,6 +1,19 @@
 import subprocess
-import requests
-import os
+
+
+def get_top_left_corner_of_active_app(app_name):
+    script = f"""
+tell application "System Events"
+    set frontApp to first application process whose name is "{app_name}"
+    try
+        set frontWindow to window 1 of frontApp
+        set windowPosition to position of frontWindow
+        return windowPosition
+    on error
+        return "Window position not available"
+    end try
+end tell"""
+    return subprocess.check_output(["osascript", "-e", script]).decode("utf-8").strip()
 
 
 def get_active_window_name():
@@ -9,30 +22,10 @@ def get_active_window_name():
 
 
 def send_notification(title, text):
-    osascript_command = f'''
+    osascript_command = f"""
     display dialog "{text}" with title "{title}" buttons {{"Logs", "Thanks, Coach! Back to work."}} default button 2
     if the button returned of the result is "Logs" then
         do shell script "open coaching_responses.txt && tail -n +1 coaching_responses.txt"
     end if
-    '''
-    subprocess.run(['osascript', '-e', osascript_command])
-
-
-from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
-
-
-slack_token = os.environ.get('SLACK_API_TOKEN')
-client = WebClient(token=slack_token)
-channel = "C06GYJ09PT7"
-
-def send_slack_message(text, image_path):
-    try:
-        response = client.files_upload(
-            channels=channel,
-            file=image_path,
-            initial_comment=text
-        )
-        print(response)
-    except SlackApiError as e:
-        print(f"Error uploading file: {e}")
+    """
+    subprocess.run(["osascript", "-e", osascript_command])
