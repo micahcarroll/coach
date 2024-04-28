@@ -1,18 +1,13 @@
-import argparse
 import base64
 import os
 import time
 from datetime import datetime
 
-# import instructor
+import fire
 import ollama
 from halo import Halo
-
-# from instructor.patch import wrap_chatcompletion
-# from litellm import completion
 from openai import OpenAI
 from pydantic import BaseModel
-
 from recorder import get_active_monitor, screenshot
 from utils import get_active_window_name, send_notification
 
@@ -22,11 +17,17 @@ from utils import get_active_window_name, send_notification
 # - Figure out how to sort out the API KEY calls
 # - "What do you currently want me to do?": have user input at the various stages of the process
 # - "hard mode" where notification can't be removed
+# - Update README
+# - Add images from each screen when in multiple monitor mode
+# - Maybe break down high res images into smaller chunks?
+# - Handle folder to save to better
+# - Get llava to be more reliable in its output format
+# - Try larger llava models
+# - To reduce false positives, could try to get the model to compare current description with previous one?
 
+OPENAI_CLIENT = OpenAI(api_key=os.getenv("OPENAI_API_KEY="))
 
-# Each person would have to be given their own API key, which would have limitations on the number of requests they can make?
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY="))
-# completion = wrap_chatcompletion(completion, mode=instructor.Mode.MD_JSON)
+SUPPORTED_MODELS = {"llava": "llava", "gpt4": "gpt-4-vision-preview"}
 
 
 class Activity(BaseModel):
@@ -60,8 +61,7 @@ Response:
 
 CURRENT GOAL: {goal}
 
-YOUR RESPONSE BELOW:
-"""
+Response:"""
 
 
 def run_coach(image_path, model, prompt):
@@ -72,44 +72,65 @@ def run_coach(image_path, model, prompt):
         encoded_image = base64.b64encode(image_data).decode("utf-8")
         image_uri = f"data:image/jpeg;base64,{encoded_image}"
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt,
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": image_uri,
+        if "gpt4" in model:
+            response = OPENAI_CLIENT.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt,
                             },
-                        },
-                    ],
-                }  # type: ignore
-            ],
-            max_tokens=300,
-        )
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image_uri,
+                                },
+                            },
+                        ],
+                    }
+                ],
+                max_tokens=300,
+            )
 
-        response_msg = response.choices[0].message.content
-        response_msg_split = response_msg.split("\n")[1:]  # type: ignore
-        assert len(response_msg_split) == 3, response_msg_split
-        productive_unparsed = response_msg_split[0].split(": ")[1]
-        assert productive_unparsed in ["True", "False"], productive_unparsed
-        productive = True if productive_unparsed == "True" else False
-        description = response_msg_split[1].split(": ")[1]
-        user_msg = response_msg_split[2].split(": ")[1]
+            response_msg = response.choices[0].message.content
+            response_msg_split = response_msg.split("\n")[1:]
+            assert len(response_msg_split) == 3, response_msg_split
+            productive_unparsed = response_msg_split[0].split(": ")[1]
+            assert productive_unparsed in ["True", "False"], productive_unparsed
+            productive = True if productive_unparsed == "True" else False
+            description = response_msg_split[1].split(": ")[1]
+            user_msg = response_msg_split[2].split(": ")[1]
+
+        elif "llava" in model:
+            response = ollama.chat(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                        "images": [image_data],
+                    },
+                ],
+            )
+            response_msg = response["message"]["content"]
+            assert all(x in response_msg for x in ["Productive:", "Description:", "Message for user:"]), response_msg
+            pre_msg, user_msg = response_msg.split("Message for user:")
+            productive_unparsed, description = pre_msg.split("Description:")
+            assert ("True" in productive_unparsed) or ("False" in productive_unparsed), productive_unparsed
+            productive = "True" in productive_unparsed
+        else:
+            raise ValueError(f"Model {model} not supported")
+
     spinner.stop()
     return productive, description, user_msg
 
 
-def run_llava(image_path, prompt, model="ollama/llava:7b-v1.6-mistral-q4_0"):
+def run_llava(image_path, prompt, model="llava"):
     spinner = Halo(text=f"👀 Running Llava ({model})...", spinner="dots")
     spinner.start()
-    model = model.split("/")[1]
     print(f"🦙 Running {model}")
     with open(image_path, "rb") as file:
         response = ollama.chat(
@@ -127,12 +148,16 @@ def run_llava(image_path, prompt, model="ollama/llava:7b-v1.6-mistral-q4_0"):
     return result
 
 
-def main(goal, hard_mode):
+def main(goal: str = "test", model: str = "llava", hard_mode: bool = False):
+    assert (
+        model in SUPPORTED_MODELS.keys()
+    ), f"Supported models are only: {SUPPORTED_MODELS.keys()}.\n You specified: {model}"
+    model = SUPPORTED_MODELS[model]
+
     print("🎯 Your goal is to ", goal)
     print("💪 HARD MODE ACTIVE" if hard_mode else "🐥 Easy mode.")
     print("")
 
-    model = "gpt-4-vision-preview"
     default_monitor = 0
 
     while True:
@@ -171,7 +196,7 @@ def main(goal, hard_mode):
             send_notification("🛑 PROCRASTINATION ALERT 🛑", user_msg)
 
         # save the activity to a file
-        with open("./logs/activities.jsonl", "a") as f:
+        with open("coach/logs/activities.jsonl", "a") as f:
             f.write(activity.model_dump_json() + "\n")
 
         iteration_end_time = time.time()  # End timing the iteration
@@ -180,10 +205,4 @@ def main(goal, hard_mode):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process command line arguments for coach.py")
-    parser.add_argument("--goal", type=str, help="Enter your goal", required=True)
-    parser.add_argument("--hard", action="store_true", help="Whether or not to go hard mode")
-
-    args = parser.parse_args()
-
-    main(args.goal, args.hard)
+    fire.Fire(main)

@@ -5,3 +5,4 @@ frames/
 .DS_STORE
 dashboard.ipynb
 *.egg-info
+*.jpg
