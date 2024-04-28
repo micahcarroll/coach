@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools"]
+
+[project]
+name = "coach"
+version = "0.0.1"
+description = "TODO"
+authors = [{ name = "TODO", email = "todo@example.com" }]
+# Dynamically include the README file, as specified in the `tool.setuptools.dynamic` section.
+dynamic = ["readme"]
+dependencies = [
+    "ollama",
+    "halo",
+    "openai",
+    "pydantic",
+    "opencv-python",
+    "numpy",
+    "pyautogui",
+    "screeninfo",
+    "pillow",
+]
+
+[tool.setuptools.dynamic]
+readme = { file = ["README.md"], content-type = "text/markdown" }
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "flake8",
+    "pep8-naming",
+    "mypy",
+    "pytest",
+    "pytest-timeout",
+    "isort",
+]
+
+[tool.black]
+line-length = 120
+include = '\.pyi?$' # Includes .pyi stub files
+exclude = ''
+
+[tool.isort]
+profile = "black"
+known-first-party = ["my_package"]
+known-third-party = ["ray", "torch"]
+
+# Should look into the below more
+[tool.pytest.ini_options]
+timeout = 60
+testpaths = ["tests"]
+markers = []

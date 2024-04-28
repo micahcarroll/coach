@@ -4,7 +4,8 @@ import time
 import cv2
 import numpy as np
 import pyautogui
-from PIL import Image
+
+# from PIL import Image
 from screeninfo import get_monitors
 
 from utils import get_top_left_corner_of_active_app
@@ -38,10 +39,7 @@ def get_active_monitor(app_name, default_monitor=0):
 
     x, y = map(int, window_pos.split(", "))
     for monitor in get_monitor_info():
-        if (
-            monitor.x <= x < monitor.x + monitor.width
-            and monitor.y <= y < monitor.y + monitor.height
-        ):
+        if monitor.x <= x < monitor.x + monitor.width and monitor.y <= y < monitor.y + monitor.height:
             return monitor
     raise ValueError(f"Could not find monitor for window position {window_pos}")
 
