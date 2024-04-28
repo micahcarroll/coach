@@ -4,12 +4,12 @@ import os
 import time
 from datetime import datetime
 
-import instructor
+# import instructor
 import ollama
-import replicate
 from halo import Halo
-from instructor.patch import wrap_chatcompletion
-from litellm import completion
+
+# from instructor.patch import wrap_chatcompletion
+# from litellm import completion
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -26,7 +26,7 @@ from utils import get_active_window_name, send_notification
 
 # Each person would have to be given their own API key, which would have limitations on the number of requests they can make?
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY="))
-completion = wrap_chatcompletion(completion, mode=instructor.Mode.MD_JSON)
+# completion = wrap_chatcompletion(completion, mode=instructor.Mode.MD_JSON)
 
 
 class Activity(BaseModel):
@@ -106,6 +106,27 @@ def run_coach(image_path, model, prompt):
     return productive, description, user_msg
 
 
+def run_llava(image_path, prompt, model="ollama/llava:7b-v1.6-mistral-q4_0"):
+    spinner = Halo(text=f"👀 Running Llava ({model})...", spinner="dots")
+    spinner.start()
+    model = model.split("/")[1]
+    print(f"🦙 Running {model}")
+    with open(image_path, "rb") as file:
+        response = ollama.chat(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [file.read()],
+                },
+            ],
+        )
+    result = response["message"]["content"]
+    spinner.stop()
+    return result
+
+
 def main(goal, hard_mode):
     print("🎯 Your goal is to ", goal)
     print("💪 HARD MODE ACTIVE" if hard_mode else "🐥 Easy mode.")
@@ -159,13 +180,9 @@ def main(goal, hard_mode):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Process command line arguments for coach.py"
-    )
+    parser = argparse.ArgumentParser(description="Process command line arguments for coach.py")
     parser.add_argument("--goal", type=str, help="Enter your goal", required=True)
-    parser.add_argument(
-        "--hard", action="store_true", help="Whether or not to go hard mode"
-    )
+    parser.add_argument("--hard", action="store_true", help="Whether or not to go hard mode")
 
     args = parser.parse_args()
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 PRODUCTIVITY_WORDS = ["social media", "distracting"]
-PRODUCTIVITY_THRESHOLD = .78
+PRODUCTIVITY_THRESHOLD = 0.78
 
 
 deployment = replicate.deployments.get("cbh123/coach-embedder")
@@ -21,6 +21,7 @@ productivity_prediction = deployment.predictions.create(
 productivity_prediction.wait()
 productivity_embedding = np.array(productivity_prediction.output)
 
+
 class EmbeddingLog(BaseModel):
     datetime: datetime
     image_path: str
@@ -29,6 +30,7 @@ class EmbeddingLog(BaseModel):
     iteration_duration: float
     replicate_prediction: str
     is_productive: bool = None
+
 
 while True:
     start = time.time()
@@ -39,9 +41,7 @@ while True:
     formatted_strings = [f'"{item[0]}"' for item in annotations if item[1] == 1.0]
 
     print(f"Formatted strings: {json.dumps(formatted_strings)}")
-    screen_prediction = deployment.predictions.create(
-       input={"texts": json.dumps(formatted_strings)}
-    )
+    screen_prediction = deployment.predictions.create(input={"texts": json.dumps(formatted_strings)})
 
     screen_prediction.wait()
     screen_embedding = np.array(screen_prediction.output)
@@ -59,7 +59,8 @@ while True:
     print("SCORE: ", aggregate_distance)
     if aggregate_distance > PRODUCTIVITY_THRESHOLD:
         print("NOT PRODUCTIVE")
-        from utils import send_notification
+        from coach.utils import send_notification
+
         send_notification("Not productive!", "Score is: " + str(aggregate_distance))
 
     end = time.time()
@@ -70,7 +71,7 @@ while True:
         image_path=path,
         replicate_prediction=screen_prediction.id,
         aggregate_distance=aggregate_distance,
-        iteration_duration=end - start
+        iteration_duration=end - start,
     )
 
     # save the activity to a file
