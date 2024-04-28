@@ -7,7 +7,6 @@ import pyautogui
 
 # from PIL import Image
 from screeninfo import get_monitors
-
 from utils import get_top_left_corner_of_active_app
 
 

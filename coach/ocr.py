@@ -1,12 +1,13 @@
-import replicate
-from ocrmac import ocrmac
-from scipy.spatial.distance import cosine
-import numpy as np
-from recorder import screenshot
 import json
 import time
-from pydantic import BaseModel
 from datetime import datetime
+
+import numpy as np
+import replicate
+from ocrmac import ocrmac
+from pydantic import BaseModel
+from recorder import screenshot
+from scipy.spatial.distance import cosine
 
 PRODUCTIVITY_WORDS = ["social media", "distracting"]
 PRODUCTIVITY_THRESHOLD = 0.78
