@@ -7,7 +7,6 @@ import pyautogui
 
 # from PIL import Image
 from screeninfo import get_monitors
-
 from utils import get_top_left_corner_of_active_app
 
 
@@ -53,7 +52,7 @@ def get_active_monitor(app_name, default_monitor=0):
 
 
 # Folder
-folder = "frames"
+folder = "coach/frames"
 
 # Create the frames folder if it doesn't exist
 frames_dir = os.path.join(os.getcwd(), folder)
